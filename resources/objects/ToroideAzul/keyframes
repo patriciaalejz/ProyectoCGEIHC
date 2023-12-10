@@ -1,0 +1,646 @@
+/*---------------------------------------------------------*/
+/* ----------------  Práctica   ANIMACION por cuadros clave       -----------*/
+/*-----------------    2024-1   ---------------------------*/
+/*------------- Alumno:  Jimenez Perez Patricia Alejandra     ---------------*/
+/*------------- No. Cuenta         315181803        ---------------*/
+#include <Windows.h>
+
+#include <glad/glad.h>
+#include <glfw3.h>	//main
+#include <stdlib.h>		
+#include <glm/glm.hpp>	//camera y model
+#include <glm/gtc/matrix_transform.hpp>	//camera y model
+#include <glm/gtc/type_ptr.hpp>
+#include <time.h>
+
+
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>	//Texture
+
+#define SDL_MAIN_HANDLED
+#include <SDL/SDL.h>
+
+#include <shader_m.h>
+#include <camera.h>
+#include <modelAnim.h>
+#include <model.h>
+#include <Skybox.h>
+#include <iostream>
+
+//#pragma comment(lib, "winmm.lib")
+
+void framebuffer_size_callback(GLFWwindow* window, int width, int height);
+void mouse_callback(GLFWwindow* window, double xpos, double ypos);
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
+//void my_input(GLFWwindow *window);
+void my_input(GLFWwindow* window, int key, int scancode, int action, int mods);
+void animate(void);
+
+// settings
+unsigned int SCR_WIDTH = 800;
+unsigned int SCR_HEIGHT = 600;
+GLFWmonitor* monitors;
+
+void getResolution(void);
+
+// camera
+Camera camera(glm::vec3(0.0f, 10.0f, 90.0f));
+float MovementSpeed = 0.1f;
+float lastX = SCR_WIDTH / 2.0f;
+float lastY = SCR_HEIGHT / 2.0f;
+bool firstMouse = true;
+
+// timing
+const int FPS = 60;
+const int LOOP_TIME = 1000 / FPS; // = 16 milisec // 1000 millisec == 1 sec
+double	deltaTime = 0.0f,
+lastFrame = 0.0f;
+
+//Lighting
+glm::vec3 lightPosition(0.0f, 4.0f, -10.0f);
+glm::vec3 lightDirection(0.0f, -1.0f, -1.0f);
+
+//// Light
+glm::vec3 lightColor = glm::vec3(0.7f);
+glm::vec3 diffuseColor = lightColor * glm::vec3(0.5f);
+glm::vec3 ambientColor = diffuseColor * glm::vec3(0.75f);
+
+// posiciones
+float	movAuto_x = 0.0f,
+movAuto_z = 0.0f,
+movAuto_y = 0.0f,
+orienta = 0.0f;
+
+bool resset= false;
+//Keyframes (Manipulación y dibujo)//---------------------------------
+float posX_A,		
+posY_A,	
+posZ_A,	
+
+posX_R,	
+posY_R,
+posZ_R,	
+
+posX_V,	
+posY_V,	
+posZ_V	
+
+;
+
+float	incX_A = 0.0f,
+incY_A = 0.0f,
+incZ_A = 0.0f,
+incX_V = 0.0f,
+incY_V = 0.0f,
+incZ_V = 0.0f,
+incX_R = 0.0f,
+incY_R = 0.0f,
+incZ_R = 0.0f;
+
+
+#define MAX_FRAMES 19//dimension del arreglo, son los cuadros clave aproximados
+int i_max_steps = 40;//cantidad de cuadros intermedios por cada cuadro clave, mas rapido es una cantidad pequeña, y mas lento unnumero mas grande
+int i_curr_steps = 0;
+typedef struct _frame
+{
+	//Variables para GUARDAR Key Frames, es decir guarda la info
+	float posX_A;		//Variable para PosicionX
+	float posY_A;		//Variable para PosicionY
+	float posZ_A;		//Variable para PosicionZ
+
+	float posX_R;		//Variable para PosicionX
+	float posY_R;		//Variable para PosicionY
+	float posZ_R;		//Variable para PosicionZ
+
+	float posX_V;		//Variable para PosicionX
+	float posY_V;		//Variable para PosicionY
+	float posZ_V;		//Variable para PosicionZ
+
+}FRAME;
+
+FRAME KeyFrame[MAX_FRAMES];
+//FrameIndex = 0;			//introducir número en caso de tener Key guardados
+int FrameIndex = 15;
+bool play = false;
+int playIndex = 0;
+
+void saveFrame(void)// aqui guarda la informacion de los cuadros al presionar L
+{
+	//printf("frameindex %d\n", FrameIndex);
+	std::cout << "Frame Index = " << FrameIndex << std::endl;
+	//se guarda en este arreglo
+	KeyFrame[FrameIndex].posX_A = posX_A;
+	KeyFrame[FrameIndex].posY_A= posY_A;
+	//KeyFrame[FrameIndex].posZ_A = posZ_A;
+
+	KeyFrame[FrameIndex].posX_V = posX_V;
+	KeyFrame[FrameIndex].posY_V= posY_V;
+	//KeyFrame[FrameIndex].posZ_V= posZ_v;
+
+	KeyFrame[FrameIndex].posX_R= posX_R;
+	KeyFrame[FrameIndex].posY_R= posY_R;
+	//KeyFrame[FrameIndex].posZ_R= posZ_R;
+
+
+
+	FrameIndex++;// contador de cual cuadro clave se esta utilizando
+}
+
+void resetElements(void)//reproduce desde el primercuadro clave en este caso el cero
+{
+	posX_A= KeyFrame[0].posX_A;
+	posY_A = KeyFrame[0].posY_A;
+	posZ_A = KeyFrame[0].posZ_A;
+
+	posX_V = KeyFrame[0].posX_V;
+	posY_V = KeyFrame[0].posY_V;
+	posZ_V = KeyFrame[0].posZ_V;
+
+	posX_R = KeyFrame[0].posX_R;
+	posY_R = KeyFrame[0].posY_R;
+	posZ_R = KeyFrame[0].posZ_R;
+}
+
+void interpolation(void)//se encarga de realizar (valor final-valor inicial)/# de cuadros intermedios
+{// objetivo calcular el incremento
+	incX_A = (KeyFrame[playIndex + 1].posX_A - KeyFrame[playIndex].posX_A) / i_max_steps;
+	incY_A = (KeyFrame[playIndex + 1].posY_A - KeyFrame[playIndex].posY_A) / i_max_steps;
+	incZ_A= (KeyFrame[playIndex + 1].posZ_A - KeyFrame[playIndex].posZ_A) / i_max_steps;
+
+	incX_V = (KeyFrame[playIndex + 1].posX_V - KeyFrame[playIndex].posX_V) / i_max_steps;
+	incY_V = (KeyFrame[playIndex + 1].posY_V - KeyFrame[playIndex].posY_V) / i_max_steps;
+	incZ_V = (KeyFrame[playIndex + 1].posZ_V - KeyFrame[playIndex].posZ_V) / i_max_steps;
+
+	incX_R = (KeyFrame[playIndex + 1].posX_R - KeyFrame[playIndex].posX_R) / i_max_steps;
+	incY_R = (KeyFrame[playIndex + 1].posY_R - KeyFrame[playIndex].posY_R) / i_max_steps;
+	incZ_R = (KeyFrame[playIndex + 1].posZ_R - KeyFrame[playIndex].posZ_R) / i_max_steps;
+
+
+
+}
+
+void animate(void)
+{
+	if (play)
+	{
+		if (i_curr_steps >= i_max_steps) //end of animation between frames?
+		{
+			playIndex++;
+			if (playIndex > FrameIndex - 2)	//end of total animation?
+			{
+				std::cout << "Animation ended" << std::endl;
+				//printf("termina anim\n");
+				playIndex = 0;
+				play = false;
+			}
+			else //Next frame interpolations
+			{
+				i_curr_steps = 0; //Reset counter
+				//Interpolation
+				interpolation();
+			}
+		}
+		else
+		{
+			//Draw animation 
+			posX_A += incX_A;
+			posY_A += incY_A;
+			posZ_A += incZ_A;
+
+			posX_V += incX_V;
+			posY_V += incY_V;
+			posZ_V += incZ_V;
+
+			posX_R += incX_R;
+			posY_R += incY_R;
+			posZ_R += incZ_R;
+
+			
+			i_curr_steps++;
+		}
+	}
+	
+}
+
+
+
+void getResolution()
+{
+	const GLFWvidmode* mode = glfwGetVideoMode(glfwGetPrimaryMonitor());
+
+	SCR_WIDTH = mode->width;
+	SCR_HEIGHT = (mode->height) - 80;
+}
+
+
+int main()
+{
+	// glfw: initialize and configure
+	// ------------------------------
+	glfwInit();
+	/*glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+	glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+	glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);*/
+
+#ifdef __APPLE__
+	glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#endif
+
+	// glfw window creation
+	// --------------------
+	// --------------------
+	monitors = glfwGetPrimaryMonitor();
+	getResolution();
+
+	GLFWwindow* window = glfwCreateWindow(SCR_WIDTH, SCR_HEIGHT, "CGeIHC 20241", NULL, NULL);
+	if (window == NULL)
+	{
+		std::cout << "Failed to create GLFW window" << std::endl;
+		glfwTerminate();
+		return -1;
+	}
+	glfwSetWindowPos(window, 0, 30);
+	glfwMakeContextCurrent(window);
+	glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
+	glfwSetCursorPosCallback(window, mouse_callback);
+	glfwSetScrollCallback(window, scroll_callback);
+	glfwSetKeyCallback(window, my_input);
+
+	// tell GLFW to capture our mouse
+	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+
+	// glad: load all OpenGL function pointers
+	// ---------------------------------------
+	if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
+	{
+		std::cout << "Failed to initialize GLAD" << std::endl;
+		return -1;
+	}
+
+	// configure global opengl state
+	// -----------------------------
+	glEnable(GL_DEPTH_TEST);
+
+	// build and compile shaders
+	// -------------------------
+	Shader staticShader("Shaders/shader_Lights.vs", "Shaders/shader_Lights_mod.fs");// modelos estaticos
+	Shader skyboxShader("Shaders/skybox.vs", "Shaders/skybox.fs");//modelos con animacion 
+	Shader animShader("Shaders/anim.vs", "Shaders/anim.fs");
+
+	vector<std::string> faces
+	{
+		"resources/skybox/right.jpg",
+		"resources/skybox/left.jpg",
+		"resources/skybox/top.jpg",
+		"resources/skybox/bottom.jpg",
+		"resources/skybox/front.jpg",
+		"resources/skybox/back.jpg"
+	};
+
+	Skybox skybox = Skybox(faces);
+
+	// Shader configuration
+	// --------------------
+	skyboxShader.use();
+	skyboxShader.setInt("skybox", 0);
+
+	// load models comienza la craga de modelos
+	// -----------
+	
+
+
+	Model piso("resources/objects/piso/piso.obj");
+	Model base("resources/objects/Bases/BaseFinal.obj");
+	Model verde("resources/objects/ToroideVerde/ToroideVerde.obj");
+	Model azul("resources/objects/ToroideAzul/ToroideAzul.obj");
+	Model rojo("resources/objects/ToroideRojo/ToroideRojo.obj");
+	Model Nombre("resources/objects/PlanoNombre/PlanoNombre.obj");
+
+
+	//// si se quiere guardar la animacion preguardada-----------------
+
+		KeyFrame[0].posX_A = 0.0f;
+		KeyFrame[0].posY_A = 0.0f;
+		KeyFrame[0].posZ_A = 0.0f;
+		KeyFrame[0].posX_V = 0.0f;
+		KeyFrame[0].posY_V = 0.0f;
+		KeyFrame[0].posZ_V = 0.0f;
+		KeyFrame[0].posX_R = 0.0f;
+		KeyFrame[0].posY_R = 0.0f;
+		KeyFrame[0].posZ_R = 0.0f;
+
+		KeyFrame[1].posX_A = 0.0f;
+		KeyFrame[1].posY_A = 10.0f;
+		KeyFrame[1].posZ_A = 0.0f;
+		KeyFrame[1].posX_V = 0.0f;
+		KeyFrame[1].posY_V = 0.0f;
+		KeyFrame[1].posZ_V = 0.0f;
+		KeyFrame[1].posX_R = 0.0f;
+		KeyFrame[1].posY_R = 0.0f;
+		KeyFrame[1].posZ_R = 0.0f;
+
+
+		KeyFrame[2].posX_A = 80.0f;
+		KeyFrame[2].posY_A = 10.0f;
+		KeyFrame[2].posZ_A = 0.0f;
+		KeyFrame[2].posX_V = 0.0f;
+		KeyFrame[2].posY_V = 0.0f;
+		KeyFrame[2].posZ_V = 0.0f;
+		KeyFrame[2].posX_R = 0.0f;
+		KeyFrame[2].posY_R = 0.0f;
+		KeyFrame[2].posZ_R = 0.0f;
+
+		KeyFrame[3].posX_A = 80.0f;
+		KeyFrame[3].posY_A = -10.0f;
+		KeyFrame[3].posZ_A = 0.0f;
+		KeyFrame[3].posX_V = 0.0f;
+		KeyFrame[3].posY_V = 0.0f;
+		KeyFrame[3].posZ_V = 0.0f;
+		KeyFrame[3].posX_R = 0.0f;
+		KeyFrame[3].posY_R = 0.0f;
+		KeyFrame[3].posZ_R = 0.0f;
+
+		KeyFrame[4].posX_A = 80.0f;
+		KeyFrame[4].posY_A = -10.0f;
+		KeyFrame[4].posZ_A = 0.0f;
+		KeyFrame[4].posX_V = 0.0f;
+		KeyFrame[4].posY_V = 10.0f;
+		KeyFrame[4].posZ_V = 0.0f;
+		KeyFrame[4].posX_R = 0.0f;
+		KeyFrame[4].posY_R = 0.0f;
+		KeyFrame[4].posZ_R = 0.0f;
+
+		KeyFrame[5].posX_A = 80.0f;
+		KeyFrame[5].posY_A = -10.0f;
+		KeyFrame[5].posZ_A = 0.0f;
+		KeyFrame[5].posX_V = 40.0f;
+		KeyFrame[5].posY_V = 10.0f;
+		KeyFrame[5].posZ_V = 0.0f;
+		KeyFrame[5].posX_R = 0.0f;
+		KeyFrame[5].posY_R = 0.0f;
+		KeyFrame[5].posZ_R = 0.0f;
+
+
+	// draw in wireframe
+	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+
+	// render loop
+	// -----------
+	while (!glfwWindowShouldClose(window))
+	{
+		skyboxShader.setInt("skybox", 0);
+
+		// per-frame time logic
+		// --------------------
+		lastFrame = SDL_GetTicks();
+
+		// input
+		// -----
+		//my_input(window);
+		animate();
+
+		// render
+		// ------
+		glClearColor(0.3f, 0.3f, 0.3f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+		// don't forget to enable shader before setting uniforms
+		staticShader.use();
+		//Setup Advanced Lights
+		staticShader.setVec3("viewPos", camera.Position);
+		staticShader.setVec3("dirLight.direction", lightDirection);
+		staticShader.setVec3("dirLight.ambient", ambientColor);
+		staticShader.setVec3("dirLight.diffuse", diffuseColor);
+		staticShader.setVec3("dirLight.specular", glm::vec3(0.6f, 0.6f, 0.6f));
+
+		staticShader.setVec3("pointLight[0].position", lightPosition);
+		staticShader.setVec3("pointLight[0].ambient", glm::vec3(0.0f, 0.0f, 0.0f));
+		staticShader.setVec3("pointLight[0].diffuse", glm::vec3(0.0f, 0.0f, 0.0f));
+		staticShader.setVec3("pointLight[0].specular", glm::vec3(0.0f, 0.0f, 0.0f));
+		staticShader.setFloat("pointLight[0].constant", 0.08f);
+		staticShader.setFloat("pointLight[0].linear", 0.009f);
+		staticShader.setFloat("pointLight[0].quadratic", 0.032f);
+
+		staticShader.setVec3("pointLight[1].position", glm::vec3(-80.0, 0.0f, 0.0f));
+		staticShader.setVec3("pointLight[1].ambient", glm::vec3(0.0f, 0.0f, 0.0f));
+		staticShader.setVec3("pointLight[1].diffuse", glm::vec3(0.0f, 0.0f, 0.0f));
+		staticShader.setVec3("pointLight[1].specular", glm::vec3(0.0f, 0.0f, 0.0f));
+		staticShader.setFloat("pointLight[1].constant", 1.0f);
+		staticShader.setFloat("pointLight[1].linear", 0.009f);
+		staticShader.setFloat("pointLight[1].quadratic", 0.032f);
+
+		staticShader.setVec3("spotLight[0].position", glm::vec3(0.0f, 20.0f, 10.0f));
+		staticShader.setVec3("spotLight[0].direction", glm::vec3(0.0f, -1.0f, 0.0f));
+		staticShader.setVec3("spotLight[0].ambient", glm::vec3(0.0f, 0.0f, 0.0f));
+		staticShader.setVec3("spotLight[0].diffuse", glm::vec3(0.0f, 0.0f, 0.0f));
+		staticShader.setVec3("spotLight[0].specular", glm::vec3(0.0f, 0.0f, 0.0f));
+		staticShader.setFloat("spotLight[0].cutOff", glm::cos(glm::radians(10.0f)));
+		staticShader.setFloat("spotLight[0].outerCutOff", glm::cos(glm::radians(60.0f)));
+		staticShader.setFloat("spotLight[0].constant", 1.0f);
+		staticShader.setFloat("spotLight[0].linear", 0.0009f);
+		staticShader.setFloat("spotLight[0].quadratic", 0.0005f);
+
+		staticShader.setFloat("material_shininess", 32.0f);
+
+		glm::mat4 model = glm::mat4(1.0f);
+		glm::mat4 tmp = glm::mat4(1.0f);
+		// view/projection transformations
+		glm::mat4 projection = glm::perspective(glm::radians(camera.Zoom), (float)SCR_WIDTH / (float)SCR_HEIGHT, 0.1f, 10000.0f);
+		glm::mat4 view = camera.GetViewMatrix();
+		staticShader.setMat4("projection", projection);
+		staticShader.setMat4("view", view);
+
+
+		// -------------------------------------------------------------------------------------------------------------------------
+		// Personaje Animacion
+		// -------------------------------------------------------------------------------------------------------------------------
+		//Remember to activate the shader with the animation
+		animShader.use();
+		animShader.setMat4("projection", projection);
+		animShader.setMat4("view", view);
+
+	
+
+	
+
+		// -------------------------------------------------------------------------------------------------------------------------
+		// Segundo Personaje Animacion
+		// -------------------------------------------------------------------------------------------------------------------------
+
+
+		// -------------------------------------------------------------------------------------------------------------------------
+		// Escenario
+		// -------------------------------------------------------------------------------------------------------------------------
+		staticShader.use();//shader estatico para dibujos de modelos
+		staticShader.setMat4("projection", projection);
+		staticShader.setMat4("view", view);
+
+		//decirle donde lo necesitp------------
+
+
+		model = glm::mat4(1.0f);
+		model = glm::translate(model, glm::vec3(0.0f, -1.75f, 0.0f));
+		model = glm::scale(model, glm::vec3(0.2f));
+		staticShader.setMat4("model", model);
+		piso.Draw(staticShader);
+
+
+		// -------------------------------------------------------------------------------------------------------------------------
+		//
+		// -------------------------------------------------------------------------------------------------------------------------
+		// Personaje   CON MODELADO JERARQUICO ---------------------------------------------------------------------
+		// -------------------------------------------------------------------------------------------------------------------------
+
+		model = glm::translate(glm::mat4(1.0f), glm::vec3(0, 0, 0));
+		staticShader.setMat4("model", model);//39.25
+		base.Draw(staticShader);
+
+
+		model = glm::translate(glm::mat4(1.0f), glm::vec3(0, 0, 0));
+		model = glm::translate(model, glm::vec3(posX_A, posY_A, posZ_A));
+		staticShader.setMat4("model", model);
+		azul.Draw(staticShader);
+
+		model = glm::translate(glm::mat4(1.0f), glm::vec3(0, 0, 0));
+		model = glm::translate(model, glm::vec3(posX_V, posY_V, posZ_V));
+		staticShader.setMat4("model", model);
+		verde.Draw(staticShader);
+
+		model = glm::translate(glm::mat4(1.0f), glm::vec3(0, 0, 0));
+		model = glm::translate(model, glm::vec3(posX_R, posY_R, posZ_R));
+		staticShader.setMat4("model", model);
+		rojo.Draw(staticShader);
+
+
+
+
+		
+		
+		// -------------------------------------------------------------------------------------------------------------------------
+		// Caja Transparente --- Siguiente Práctica
+		// -------------------------------------------------------------------------------------------------------------------------
+		/*glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		model = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -70.0f));
+		model = glm::scale(model, glm::vec3(5.0f));
+		staticShader.setMat4("model", model);
+		cubo.Draw(staticShader);
+		glEnable(GL_BLEND);*/
+		// -------------------------------------------------------------------------------------------------------------------------
+		// Termina Escenario
+		// -------------------------------------------------------------------------------------------------------------------------
+
+		//-------------------------------------------------------------------------------------
+		// draw skybox as last
+		// -------------------
+		skyboxShader.use();
+		skybox.Draw(skyboxShader, view, projection, camera);
+
+		// Limitar el framerate a 60
+		deltaTime = SDL_GetTicks() - lastFrame; // time for full 1 loop
+		//std::cout <<"frame time = " << frameTime << " milli sec"<< std::endl;
+		if (deltaTime < LOOP_TIME)
+		{
+			SDL_Delay((int)(LOOP_TIME - deltaTime));
+		}
+
+		// glfw: swap buffers and poll IO events (keys pressed/released, mouse moved etc.)
+		// -------------------------------------------------------------------------------
+		glfwSwapBuffers(window);
+		glfwPollEvents();
+	}
+
+	skybox.Terminate();
+
+	glfwTerminate();
+	return 0;
+}
+
+// process all input: query GLFW whether relevant keys are pressed/released this frame and react accordingly
+// ---------------------------------------------------------------------------------------------------------
+void my_input(GLFWwindow* window, int key, int scancode, int action, int mode)
+{
+	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
+		glfwSetWindowShouldClose(window, true);
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+		camera.ProcessKeyboard(FORWARD, (float)deltaTime);
+	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+		camera.ProcessKeyboard(BACKWARD, (float)deltaTime);
+	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+		camera.ProcessKeyboard(LEFT, (float)deltaTime);
+	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+		camera.ProcessKeyboard(RIGHT, (float)deltaTime);
+	
+	if (glfwGetKey(window, GLFW_KEY_M) == GLFW_PRESS)
+		lightPosition.x++;
+	if (glfwGetKey(window, GLFW_KEY_N) == GLFW_PRESS)
+		lightPosition.x--;
+
+	if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS)
+			resset=true;
+
+	//To play KeyFrame animation 
+	if (key == GLFW_KEY_P && action == GLFW_PRESS)
+	{
+		if (play == false && (FrameIndex > 1))
+		{
+			std::cout << "Play animation" << std::endl;
+			
+			//First Interpolation				
+			interpolation();
+
+			play = true;
+			playIndex = 0;
+			i_curr_steps = 0;
+		}
+		else
+		{
+			play = false;
+			std::cout << "Not enough Key Frames" << std::endl;
+		}
+	}
+
+	//To Save a KeyFrame
+	if (key == GLFW_KEY_L && action == GLFW_PRESS)
+	{
+		if (FrameIndex < MAX_FRAMES)
+		{
+			saveFrame();
+		}
+	}
+}
+
+// glfw: whenever the window size changed (by OS or user resize) this callback function executes
+// ---------------------------------------------------------------------------------------------
+void framebuffer_size_callback(GLFWwindow* window, int width, int height)
+{
+	// make sure the viewport matches the new window dimensions; note that width and 
+	// height will be significantly larger than specified on retina displays.
+	glViewport(0, 0, width, height);
+}
+
+// glfw: whenever the mouse moves, this callback is called
+// -------------------------------------------------------
+void mouse_callback(GLFWwindow* window, double xpos, double ypos)
+{
+	if (firstMouse)
+	{
+		lastX = xpos;
+		lastY = ypos;
+		firstMouse = false;
+	}
+
+	float xoffset = xpos - lastX;
+	float yoffset = lastY - ypos; // reversed since y-coordinates go from bottom to top
+
+	lastX = xpos;
+	lastY = ypos;
+
+	camera.ProcessMouseMovement(xoffset, yoffset);
+}
+// glfw: whenever the mouse scroll wheel scrolls, this callback is called
+// ----------------------------------------------------------------------
+void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
+{
+	camera.ProcessMouseScroll(yoffset);
+}
